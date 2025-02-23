@@ -1,0 +1,5 @@
+dash
+dash-bootstrap-components
+psycopg2-binary
+python-dotenv
+gunicorn
