@@ -14,7 +14,10 @@ from flask import Flask
 load_dotenv()
 
 # Configuration de la locale pour le formatage des dates en français
-locale.setlocale(locale.LC_TIME, "fr_FR")
+try:
+    locale.setlocale(locale.LC_TIME, "fr_FR.UTF-8")
+except locale.Error:
+    locale.setlocale(locale.LC_TIME, "")
 
 # Configuration de l'application Flask et Dash
 server = Flask(__name__)
