@@ -1,0 +1,23 @@
+/* Animation pour l'apparition du modal */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* Appliquer les animations */
+.modal-content {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.btn-primary, .btn-secondary {
+    animation: pulse 1.5s infinite;
+}
+
+.btn-primary:hover, .btn-secondary:hover {
+    animation: none;
+    transform: scale(1.05);
+}

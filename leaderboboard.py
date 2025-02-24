@@ -1,5 +1,6 @@
 import dash
-from dash import dcc, html, Input, Output, Stat
+import dash_auth
+from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
 from datetime import datetime
 import os
@@ -7,6 +8,7 @@ import psycopg2
 from psycopg2 import sql
 import locale
 from dotenv import load_dotenv
+from flask import Flask
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -14,12 +16,16 @@ load_dotenv()
 # Configuration de la locale pour le formatage des dates en français
 locale.setlocale(locale.LC_TIME, "fr_FR")
 
-# Initialisation de l'application Dash
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# Configuration de l'application Flask et Dash
+server = Flask(__name__)
+app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Leaderboard App"
 
-# Configuration du mot de passe via une variable d'environnement
-PASSWORD = os.getenv("APP_PASSWORD")
+# Authentification avec dash_auth
+VALID_USERNAME_PASSWORD_PAIRS = {
+    "coloc": os.getenv("APP_PASSWORD")  # Mot de passe admin depuis les variables d'environnement
+}
+auth = dash_auth.BasicAuth(app, VALID_USERNAME_PASSWORD_PAIRS)
 
 # Liste prédéfinie de participants avec leur sexe
 PREDEFINED_PARTICIPANTS = [
@@ -49,10 +55,18 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS participants (
             id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            sexe TEXT NOT NULL
+        );
+    """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scores (
+            id SERIAL PRIMARY KEY,
+            participant_id INTEGER NOT NULL REFERENCES participants(id),
             points INTEGER NOT NULL,
             motif TEXT NOT NULL,
-            sexe TEXT NOT NULL,
             date TEXT NOT NULL
         );
     """
@@ -68,8 +82,6 @@ init_db()
 app.layout = dbc.Container(
     [
         dcc.Location(id="url", refresh=False),  # Pour gérer la navigation
-        dcc.Store(id="deleted-event", data=None),  # Pour stocker l'événement supprimé
-        html.Div(id="page-content"),  # Contenu de la page (login ou leaderboard)
         dbc.Modal(  # Modal pour l'historique
             [
                 dbc.ModalHeader("Historique des points"),
@@ -80,55 +92,6 @@ app.layout = dbc.Container(
             size="lg",
             is_open=False,
         ),
-        dbc.Toast(  # Notification pour annuler la suppression
-            id="undo-toast",
-            header="Événement supprimé",
-            duration=5000,  # 5 secondes
-            is_open=False,
-            dismissable=True,
-            icon="danger",
-            style={"position": "fixed", "top": "10px", "right": "10px", "width": "350px"},
-        ),
-    ],
-    fluid=True,
-    style={"maxWidth": "800px", "padding": "20px"},
-)  # Centrage et largeur maximale
-
-# Layout de la page de login
-login_layout = dbc.Container(
-    [
-        dbc.Row(dbc.Col(html.H1("Connexion au Leaderboboard", className="text-center"))),
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        html.Label("Mot de passe"),
-                        dbc.Input(
-                            id="password-input",
-                            type="password",
-                            placeholder="Entrez le mot de passe",
-                            className="mb-3",
-                        ),
-                        dbc.Button(
-                            "Se connecter", id="login-button", color="primary", className="w-100"
-                        ),
-                        html.Div(
-                            id="login-message", className="mt-3"
-                        ),  # Pour afficher les messages d'erreur
-                    ],
-                    width=12,
-                    md=6,
-                    className="mx-auto",
-                )  # Centrage sur les écrans mobiles
-            ]
-        ),
-    ],
-    fluid=True,
-)
-
-# Layout du tableau de bord
-leaderboard_layout = dbc.Container(
-    [
         dbc.Row(dbc.Col(html.H1("Leaderboard", className="text-center"))),
         dbc.Row(
             dbc.Col(html.Div(id="king-message", className="text-center mb-3"))
@@ -192,33 +155,8 @@ leaderboard_layout = dbc.Container(
         ),
     ],
     fluid=True,
-)
-
-
-# Callback pour gérer la navigation entre les pages
-@app.callback(
-    Output("page-content", "children"), Input("url", "pathname"), State("url", "pathname")
-)
-def display_page(pathname, _):
-    if pathname == "/leaderboard":
-        return leaderboard_layout
-    else:
-        return login_layout
-
-
-# Callback pour vérifier le mot de passe
-@app.callback(
-    Output("login-message", "children"),
-    Output("url", "pathname"),
-    Input("login-button", "n_clicks"),
-    State("password-input", "value"),
-    prevent_initial_call=True,
-)
-def check_password(n_clicks, password):
-    if password == PASSWORD:
-        return "", "/leaderboard"  # Redirection vers le tableau de bord
-    else:
-        return dbc.Alert("Mot de passe incorrect", color="danger"), "/"  # Message d'erreur
+    style={"maxWidth": "800px", "padding": "20px"},
+)  # Centrage et largeur maximale
 
 
 # Callback pour ajouter des points à plusieurs participants
@@ -229,14 +167,9 @@ def check_password(n_clicks, password):
     State("names-input", "value"),
     State("batch-points-input", "value"),
     State("batch-motif-input", "value"),
-    State("url", "pathname"),  # Ajoutez l'état de l'URL
-    prevent_initial_call=True,
+    prevent_initial_call="initial_duplicate",
 )
-def update_leaderboard(batch_clicks, names, batch_points, batch_motif, pathname):
-    # Ne pas exécuter le callback si l'utilisateur n'est pas sur la page du tableau de bord
-    if pathname != "/leaderboard":
-        return dash.no_update, dash.no_update
-
+def update_leaderboard(batch_clicks, names, batch_points, batch_motif):
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -244,12 +177,15 @@ def update_leaderboard(batch_clicks, names, batch_points, batch_motif, pathname)
         if names and batch_points is not None and batch_motif:
             date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             for n in names:
-                sexe = next(p["sexe"] for p in PREDEFINED_PARTICIPANTS if p["name"] == n)
+                # Récupérer l'ID du participant
+                cur.execute("SELECT id FROM participants WHERE name = %s", (n,))
+                participant_id = cur.fetchone()[0]
+                # Insérer le score
                 cur.execute(
                     sql.SQL(
-                        "INSERT INTO participants (name, points, motif, sexe, date) VALUES (%s, %s, %s, %s, %s)"
+                        "INSERT INTO scores (participant_id, points, motif, date) VALUES (%s, %s, %s, %s)"
                     ),
-                    (n, batch_points, batch_motif, sexe, date),
+                    (participant_id, batch_points, batch_motif, date),
                 )
             conn.commit()
     except Exception as e:
@@ -269,7 +205,13 @@ def get_leaderboard_table():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT name, SUM(points) as total_points FROM participants GROUP BY name ORDER BY total_points DESC"
+        """
+        SELECT p.name, SUM(s.points) as total_points
+        FROM participants p
+        JOIN scores s ON p.id = s.participant_id
+        GROUP BY p.name
+        ORDER BY total_points DESC
+        """
     )
     participants = cur.fetchall()
     cur.close()
@@ -290,7 +232,14 @@ def get_king_message():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT name, sexe, SUM(points) as total_points FROM participants GROUP BY name ORDER BY total_points DESC LIMIT 1"
+        """
+        SELECT p.name, p.sexe, SUM(s.points) as total_points
+        FROM participants p
+        JOIN scores s ON p.id = s.participant_id
+        GROUP BY p.name, p.sexe
+        ORDER BY total_points DESC
+        LIMIT 1
+        """
     )
     king = cur.fetchone()
     cur.close()
@@ -314,7 +263,14 @@ def format_date_fr(date_str):
 def get_history_table():
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, points, motif, date FROM participants ORDER BY id DESC")
+    cur.execute(
+        """
+        SELECT p.name, s.points, s.motif, s.date
+        FROM scores s
+        JOIN participants p ON s.participant_id = p.id
+        ORDER BY s.id DESC
+        """
+    )
     history = cur.fetchall()
     cur.close()
     conn.close()
@@ -323,18 +279,10 @@ def get_history_table():
         rows.append(
             html.Tr(
                 [
+                    html.Td(entry[0]),
                     html.Td(entry[1]),
                     html.Td(entry[2]),
-                    html.Td(entry[3]),
-                    html.Td(format_date_fr(entry[4])),
-                    html.Td(
-                        dbc.Button(
-                            "Supprimer",
-                            id={"type": "delete-button", "index": entry[0]},
-                            color="danger",
-                            size="sm",
-                        )
-                    ),
+                    html.Td(format_date_fr(entry[3])),
                 ]
             )
         )
@@ -347,7 +295,6 @@ def get_history_table():
                         html.Th("Points"),
                         html.Th("Motif"),
                         html.Th("Date"),
-                        html.Th("Action"),
                     ]
                 )
             ),
@@ -377,85 +324,27 @@ def toggle_history(open_clicks, close_clicks, is_open):
 @app.callback(
     Output("history-table", "children", allow_duplicate=True),
     Input("history-modal", "is_open"),
-    Input("deleted-event", "data"),
     prevent_initial_call=True,
 )
-def update_history(is_open, deleted_event):
+def update_history(is_open):
     if is_open:
         return get_history_table()
     return dash.no_update
 
 
-# Callback pour supprimer un événement
+# Callback pour activer les boutons avec la touche Entrée
 @app.callback(
-    Output("leaderboard-table", "children", allow_duplicate=True),
-    Output("king-message", "children", allow_duplicate=True),
-    Output("deleted-event", "data"),
-    Output("undo-toast", "is_open"),
-    Output("history-table", "children", allow_duplicate=True),
-    Input({"type": "delete-button", "index": dash.dependencies.ALL}, "n_clicks"),
+    Output("batch-add-points-button", "n_clicks", allow_duplicate=True),
+    Input("batch-points-input", "n_submit"),
+    Input("batch-motif-input", "n_submit"),
     prevent_initial_call=True,
 )
-def delete_event(n_clicks):
+def handle_enter_key(n_submit_points, n_submit_motif):
     ctx = dash.callback_context
     if not ctx.triggered:
-        return dash.no_update, dash.no_update, None, False, dash.no_update
+        return dash.no_update
 
-    button_id = ctx.triggered[0]["prop_id"]
-    event_id = eval(button_id.split(".")[0])["index"]
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM participants WHERE id = %s", (event_id,))
-    deleted_event = cur.fetchone()
-    cur.execute("DELETE FROM participants WHERE id = %s", (event_id,))
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    # Mettre à jour le tableau du leaderboard, le message du roi/la reine et l'historique
-    leaderboard_table = get_leaderboard_table()
-    king_message = get_king_message()
-    history_table = get_history_table()
-    return leaderboard_table, king_message, deleted_event, True, history_table
-
-
-# Callback pour annuler la suppression
-@app.callback(
-    Output("leaderboard-table", "children", allow_duplicate=True),
-    Output("king-message", "children", allow_duplicate=True),
-    Output("deleted-event", "data"),
-    Output("history-table", "children", allow_duplicate=True),
-    Input("undo-toast", "n_dismiss"),
-    State("deleted-event", "data"),
-    prevent_initial_call=True,
-)
-def undo_delete(n_dismiss, deleted_event):
-    if deleted_event:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            sql.SQL(
-                "INSERT INTO participants (name, points, motif, sexe, date) VALUES (%s, %s, %s, %s, %s)"
-            ),
-            (
-                deleted_event[1],
-                deleted_event[2],
-                deleted_event[3],
-                deleted_event[4],
-                deleted_event[5],
-            ),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        # Mettre à jour le tableau du leaderboard, le message du roi/la reine et l'historique
-        leaderboard_table = get_leaderboard_table()
-        king_message = get_king_message()
-        history_table = get_history_table()
-        return leaderboard_table, king_message, None, history_table
-    return dash.no_update, dash.no_update, None, dash.no_update
+    return 1
 
 
 # Lancement de l'application
