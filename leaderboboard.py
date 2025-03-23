@@ -35,6 +35,16 @@ PREDEFINED_PARTICIPANTS = [
     {"name": os.getenv("COLOC_FOUR"), "sexe": "homme"},
 ]
 
+dico_english_days = {
+    "Monday": "Lundi",
+    "Tuesday": "Mardi",
+    "Wednesday": "Mercredi",
+    "Thursday": "Jeudi",
+    "Friday": "Vendredi",
+    "Saturday": "Samedi",
+    "Sunday": "Dimanche",
+}
+
 
 # Connexion à la base de données PostgreSQL
 def get_db_connection():
@@ -92,7 +102,7 @@ app.layout = dbc.Container(
             size="lg",
             is_open=False,
         ),
-        dbc.Row(dbc.Col(html.H1("Leaderboard", className="text-center"))),
+        dbc.Row(dbc.Col(html.H1("Leaderboboard", className="text-center"))),
         dbc.Row(
             dbc.Col(html.Div(id="king-message", className="text-center mb-3"))
         ),  # Message du roi/la reine
@@ -246,9 +256,9 @@ def get_king_message():
     conn.close()
     if king:
         if king[1] == "homme":
-            return html.H4(f"{king[0]} est le roi de la bourgeoisie 👑", style={"color": "gold"})
+            return html.H4(f"{king[0]} est le roi des bobos 👑", style={"color": "gold"})
         else:
-            return html.H4(f"{king[0]} est la reine de la bourgeoisie 👑", style={"color": "gold"})
+            return html.H4(f"{king[0]} est la reine des bobos 👑", style={"color": "gold"})
     else:
         return html.H4("Aucun participant n'a encore de points.")
 
@@ -256,7 +266,11 @@ def get_king_message():
 # Fonction pour formater la date en français
 def format_date_fr(date_str):
     date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-    return date_obj.strftime("%A %d %B %Y, %Hh %Mmin %Ss")
+    date_english = date_obj.strftime("%A %d %B %Y, %Hh %Mmin %Ss")
+    date = date_english.copy()
+    for en_day, fr_day in dico_english_days.items():
+        date = date.replace(en_day, fr_day)
+    return date
 
 
 # Fonction pour générer le tableau d'historique
