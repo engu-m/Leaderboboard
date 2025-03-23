@@ -13,9 +13,6 @@ from flask import Flask
 # Charger les variables d'environnement
 load_dotenv()
 
-# Configuration de la locale pour le formatage des dates en français
-locale.setlocale(locale.LC_TIME, "fr_FR")
-
 # Configuration de l'application Flask et Dash
 server = Flask(__name__)
 app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -43,6 +40,21 @@ dico_english_days = {
     "Friday": "Vendredi",
     "Saturday": "Samedi",
     "Sunday": "Dimanche",
+}
+
+dico_english_months = {
+    "January": "Janvier",
+    "February": "Février",
+    "March": "Mars",
+    "April": "Avril",
+    "May": "Mai",
+    "June": "Juin",
+    "July": "Juillet",
+    "August": "Août",
+    "September": "Septembre",
+    "October": "Octobre",
+    "November": "Novembre",
+    "December": "Décembre",
 }
 
 
@@ -97,10 +109,28 @@ app.layout = dbc.Container(
                 dbc.ModalHeader("Historique des points"),
                 dbc.ModalBody(id="history-table"),
                 dbc.ModalFooter(dbc.Button("Fermer", id="close-history", className="ms-auto")),
+                dbc.Alert(  # alert pour le retour visuel
+                    "Suppression",
+                    id="delete_alert",
+                    is_open=False,
+                    dismissable=True,
+                    duration=2000,
+                    color="danger",
+                    style={"position": "fixed", "top": 10, "right": 10, "width": 350},
+                ),
             ],
             id="history-modal",
             size="lg",
             is_open=False,
+        ),
+        dbc.Alert(  # alert pour le retour visuel
+            "Succès",
+            id="add_alert",
+            is_open=False,
+            dismissable=True,
+            duration=3000,
+            color="success",
+            style={"position": "fixed", "top": 10, "right": 10, "width": 350},
         ),
         dbc.Row(dbc.Col(html.H1("Leaderboboard", className="text-center"))),
         dbc.Row(
@@ -122,15 +152,15 @@ app.layout = dbc.Container(
                             className="mb-3",
                         ),
                         dbc.Input(
-                            id="batch-points-input",
-                            type="number",
-                            placeholder="Entrez les points",
-                            className="mb-3",
-                        ),
-                        dbc.Input(
                             id="batch-motif-input",
                             type="text",
                             placeholder="Entrez le motif",
+                            className="mb-3",
+                        ),
+                        dbc.Input(
+                            id="batch-points-input",
+                            type="number",
+                            placeholder="Entrez les points",
                             className="mb-3",
                         ),
                         dbc.Button(
@@ -173,6 +203,8 @@ app.layout = dbc.Container(
 @app.callback(
     Output("leaderboard-table", "children", allow_duplicate=True),
     Output("king-message", "children", allow_duplicate=True),
+    Output("add_alert", "is_open"),
+    Output("add_alert", "children"),
     Input("batch-add-points-button", "n_clicks"),
     State("names-input", "value"),
     State("batch-points-input", "value"),
@@ -207,7 +239,12 @@ def update_leaderboard(batch_clicks, names, batch_points, batch_motif):
     # Mettre à jour le tableau du leaderboard et le message du roi/la reine
     leaderboard_table = get_leaderboard_table()
     king_message = get_king_message()
-    return leaderboard_table, king_message
+    return (
+        leaderboard_table,
+        king_message,
+        batch_clicks is not None,
+        f"Evénement {batch_motif} ajouté au leaderboboard",
+    )
 
 
 # Fonction pour générer le tableau du leaderboard
@@ -266,10 +303,11 @@ def get_king_message():
 # Fonction pour formater la date en français
 def format_date_fr(date_str):
     date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-    date_english = date_obj.strftime("%A %d %B %Y, %Hh %Mmin %Ss")
-    date = date_english.copy()
+    date = date_obj.strftime("%A %d %B %Y, %Hh %Mmin %Ss")
     for en_day, fr_day in dico_english_days.items():
         date = date.replace(en_day, fr_day)
+    for en_month, fr_month in dico_english_months.items():
+        date = date.replace(en_month, fr_month)
     return date
 
 
@@ -279,7 +317,7 @@ def get_history_table():
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT p.name, s.points, s.motif, s.date
+        SELECT s.id, p.name, s.points, s.motif, s.date
         FROM scores s
         JOIN participants p ON s.participant_id = p.id
         ORDER BY s.id DESC
@@ -293,10 +331,18 @@ def get_history_table():
         rows.append(
             html.Tr(
                 [
-                    html.Td(entry[0]),
                     html.Td(entry[1]),
                     html.Td(entry[2]),
-                    html.Td(format_date_fr(entry[3])),
+                    html.Td(entry[3]),
+                    html.Td(format_date_fr(entry[4])),
+                    html.Td(
+                        dbc.Button(
+                            "Supprimer",
+                            id={"type": "delete-button", "index": entry[0]},
+                            color="danger",
+                            size="sm",
+                        )
+                    ),
                 ]
             )
         )
@@ -309,6 +355,7 @@ def get_history_table():
                         html.Th("Points"),
                         html.Th("Motif"),
                         html.Th("Date"),
+                        html.Th("Action"),
                     ]
                 )
             ),
@@ -334,6 +381,20 @@ def toggle_history(open_clicks, close_clicks, is_open):
     return is_open
 
 
+@app.callback(
+    Output("leaderboard-table", "children", allow_duplicate=True),
+    Output("king-message", "children", allow_duplicate=True),
+    Input("history-modal", "is_open"),
+    prevent_initial_call=True,
+)
+def refresh_homepage(is_open):
+    if not is_open:
+        leaderboard_table = get_leaderboard_table()
+        king_message = get_king_message()
+        return leaderboard_table, king_message
+    return dash.no_update, dash.no_update
+
+
 # Callback pour mettre à jour le contenu de l'historique
 @app.callback(
     Output("history-table", "children", allow_duplicate=True),
@@ -344,6 +405,43 @@ def update_history(is_open):
     if is_open:
         return get_history_table()
     return dash.no_update
+
+
+# Callback pour supprimer un événement
+@app.callback(
+    Output("history-table", "children", allow_duplicate=True),
+    Output("delete_alert", "children"),
+    Output("delete_alert", "is_open"),
+    Input({"type": "delete-button", "index": dash.dependencies.ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def delete_event(n_clicks):
+    ctx = dash.callback_context
+    if not ctx.triggered or not (any(prop["value"] is not None for prop in ctx.triggered)):
+        return dash.no_update, dash.no_update, dash.no_update
+
+    # Récupérer l'ID de l'événement à supprimer
+    event_id = ctx.triggered_id.index
+
+    # Récupération de l'événement à supprimer
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT motif FROM scores WHERE id = %s", (event_id,))
+    deleted_event_motif = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # Supprimer l'événement de la base de données
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM scores WHERE id = %s", (event_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # Mettre à jour l'historique
+    return get_history_table(), f"Evénement {deleted_event_motif} supprimé du leaderboboard", True
 
 
 # Callback pour activer les boutons avec la touche Entrée
