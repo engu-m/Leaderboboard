@@ -18,6 +18,8 @@ server = Flask(__name__)
 app = dash.Dash(__name__, server=server, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Leaderboard App"
 
+locale.setlocale(locale.LC_TIME, "")
+
 # Authentification avec dash_auth
 VALID_USERNAME_PASSWORD_PAIRS = {
     "coloc": os.getenv("APP_PASSWORD")  # Mot de passe admin depuis les variables d'environnement
