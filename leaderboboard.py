@@ -32,6 +32,7 @@ PREDEFINED_PARTICIPANTS = [
     {"name": os.getenv("COLOC_TWO"), "sexe": "femme"},
     {"name": os.getenv("COLOC_THREE"), "sexe": "homme"},
     {"name": os.getenv("COLOC_FOUR"), "sexe": "homme"},
+    {"name": os.getenv("COLOC_FIVE"), "sexe": "homme"},
 ]
 
 dico_english_days = {
